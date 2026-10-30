@@ -1,0 +1,67 @@
+title: "[스크럼] N주차 N일차 MM/DD(요일)"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        제목 예: `[스크럼] 1주차 2일차 11/2(월)`
+        공통은 "A vs B -> 결정" 형식으로, 안 정해졌으면 "아직 안 정해짐"이라고 적어 주세요.
+  - type: textarea
+    id: common
+    attributes:
+      label: 공통
+      value: |
+        - 항목: A vs B -> 결정
+    validations:
+      required: true
+  - type: textarea
+    id: members
+    attributes:
+      label: 팀원별
+      value: |
+        ## 영준
+
+        ### 어제 한 일
+
+        - 
+
+        ### 오늘 할 일
+
+        - 
+
+        ---
+
+        ## 수연
+
+        ### 어제 한 일
+
+        - 
+
+        ### 오늘 할 일
+
+        - 
+
+        ---
+
+        ## 지영
+
+        ### 어제 한 일
+
+        - 
+
+        ### 오늘 할 일
+
+        - 
+
+        ---
+
+        ## 재웅
+
+        ### 어제 한 일
+
+        - 
+
+        ### 오늘 할 일
+
+        - 
+    validations:
+      required: true
