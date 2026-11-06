@@ -1,0 +1,102 @@
+# posts/ 아래에 새 .md 파일이 push되면 그 내용으로 Discussion 글을 만들어요.
+# 파일 형식:
+#   제목: [스크럼] 1주차 6일차 11/6(금)
+#   카테고리: scrum          (선택. 카테고리 이름이나 slug. 없으면 scrum)
+#   ---
+#   (본문 마크다운)
+# 같은 제목의 글이 이미 있으면 새로 만들지 않아요(같은 파일을 다시 push해도 한 번만 올라감).
+name: Post Discussion
+
+on:
+  push:
+    branches: [main, posts]
+    paths: ['posts/**.md']
+  workflow_dispatch:
+    inputs:
+      path:
+        description: '올릴 파일 경로 (예: posts/2026-11-06-scrum.md)'
+        required: true
+
+permissions:
+  contents: read
+  discussions: write
+
+concurrency:
+  group: post-discussion
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: 올릴 파일 고르기
+        id: files
+        env:
+          INPUT_PATH: ${{ github.event.inputs.path }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [ -n "$INPUT_PATH" ]; then
+            echo "$INPUT_PATH" > files.txt
+          elif [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            git show --name-only --diff-filter=AM --pretty=format: "$AFTER" -- 'posts/*.md' > files.txt
+          else
+            git diff --name-only --diff-filter=AM "$BEFORE" "$AFTER" -- 'posts/*.md' > files.txt
+          fi
+          sed -i '/^$/d' files.txt
+          cat files.txt
+
+      - name: Discussion 글 만들기
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const fs = require('fs');
+            const files = fs.readFileSync('files.txt', 'utf8').split('\n').filter(Boolean);
+            if (files.length === 0) { core.info('올릴 파일이 없어요'); return; }
+
+            const { owner, repo } = context.repo;
+            const info = await github.graphql(`
+              query($owner: String!, $repo: String!) {
+                repository(owner: $owner, name: $repo) {
+                  id
+                  discussionCategories(first: 50) { nodes { id name slug } }
+                  discussions(first: 100, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { title url } }
+                }
+              }`, { owner, repo });
+            const repoInfo = info.repository;
+            const existing = new Map(repoInfo.discussions.nodes.map(d => [d.title.trim(), d.url]));
+
+            for (const file of files) {
+              const text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+              const sep = text.indexOf('\n---\n');
+              if (sep < 0) { core.setFailed(`${file}: 머리말 뒤에 '---' 줄이 없어요`); continue; }
+              const head = text.slice(0, sep);
+              const body = text.slice(sep + 5).trim();
+              const title = (head.match(/^제목:\s*(.+)$/m) || [])[1]?.trim();
+              const want = ((head.match(/^카테고리:\s*(.+)$/m) || [])[1] || 'scrum').trim().toLowerCase();
+              if (!title) { core.setFailed(`${file}: '제목:' 줄이 없어요`); continue; }
+              if (!body) { core.setFailed(`${file}: 본문이 비어 있어요`); continue; }
+
+              if (existing.has(title)) { core.info(`이미 있어요: ${title} → ${existing.get(title)}`); continue; }
+
+              const cats = repoInfo.discussionCategories.nodes;
+              const cat = cats.find(c => c.slug.toLowerCase() === want || c.name.trim().toLowerCase() === want);
+              if (!cat) {
+                core.setFailed(`${file}: 카테고리 '${want}'를 못 찾았어요. 있는 것: ${cats.map(c => `${c.name}(${c.slug})`).join(', ')}`);
+                continue;
+              }
+
+              const res = await github.graphql(`
+                mutation($repositoryId: ID!, $categoryId: ID!, $title: String!, $body: String!) {
+                  createDiscussion(input: {repositoryId: $repositoryId, categoryId: $categoryId, title: $title, body: $body}) {
+                    discussion { url }
+                  }
+                }`, { repositoryId: repoInfo.id, categoryId: cat.id, title, body });
+              existing.set(title, res.createDiscussion.discussion.url);
+              core.info(`올렸어요: ${title} → ${res.createDiscussion.discussion.url}`);
+              await core.summary.addRaw(`- [${title}](${res.createDiscussion.discussion.url})\n`).write();
+            }
